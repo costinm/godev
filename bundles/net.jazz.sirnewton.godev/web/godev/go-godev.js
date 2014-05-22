@@ -484,6 +484,21 @@ define(['orion/xhr', 'orion/plugin', 'orion/form'], function (xhr, PluginProvide
 		"orion.edit.command", 
 		{
 			run: function(selectedText, text, selection, resource) {
+				return {uriTemplate: "/godev/quickrun/run.html?resource="+resource+"&test=1&sel="+selection.start, width: "780px", height: "520px"};
+			}
+		},
+		{
+			name: "Test",
+			id: "go.test",
+			tooltip: "Go test the file (F9)",
+			key: [120],
+			contentType: ["text/x-go"]
+		});
+	
+	provider.registerService(
+		"orion.edit.command", 
+		{
+			run: function(selectedText, text, selection, resource) {
 				return {uriTemplate: "/godev/quickrun/run.html?resource="+resource+"&sel="+selection.start, width: "780px", height: "520px"};
 			}
 		},
@@ -494,7 +509,7 @@ define(['orion/xhr', 'orion/plugin', 'orion/form'], function (xhr, PluginProvide
 			key: [119],
 			contentType: ["text/x-go"]
 		});
-		
+	
 	provider.registerService(
 		"orion.edit.command", 
 		{

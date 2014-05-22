@@ -11,11 +11,13 @@ function(mBootstrap, xhr, terminal) {
 		var resource = url.substring(url.indexOf("?resource="), url.indexOf("&"));
 		resource = resource.replace("?resource=", "");
 		
+		console.log("Starting run")
 		var selectionIdx = url.indexOf("&sel=");
 		var selectionIdx2 = url.indexOf("&", selectionIdx + 1);
 		if (selectionIdx2 === -1) {
 			selectionIdx2 = url.length;
 		}
+		var isTest = url.indexOf("&test=1") > -1;
 		var selection = url.substring(url.indexOf("&sel="), selectionIdx2);
 		selection = selection.replace("&sel=", "");
 		var selectionInt = parseInt(selection);
@@ -25,12 +27,13 @@ function(mBootstrap, xhr, terminal) {
 		var cancel = function() {
 			// We must close the dialog in a timer because on firefox
 			//  the shutdown will pre-empt the navigation of the parent page.
+			console.log("Cancel quick run");
 			window.setTimeout(function() {
 				var result = {selection: {start: selectionInt, end: selectionInt}};
 				
 				window.parent.postMessage(JSON.stringify({
 				   pageService: "orion.page.delegatedUI",
-				   source: "go.run",
+				   source: isTest ? "go.test" : "go.run",
 				   result: result
 				}), "*");
 			}, 100);
@@ -41,10 +44,11 @@ function(mBootstrap, xhr, terminal) {
 		var shutdown = function(restoreSelection) {
 			// We must close the dialog in a timer because on firefox
 			//  the shutdown will pre-empt the navigation of the parent page.
+			console.log("Cancel quick run");
 			window.setTimeout(function() {
 				window.parent.postMessage(JSON.stringify({
 				   pageService: "orion.page.delegatedUI",
-				   source: "go.run",
+				   source: isTest ? "go.test" : "go.run",
 				   cancelled: true
 				}), "*");
 			}, 100);
@@ -52,12 +56,14 @@ function(mBootstrap, xhr, terminal) {
 		
 		// Close the window when escape key is pressed
 		document.addEventListener("keyup", function(evt) {
+			console.log(evt.keyCode);
 			if (evt.keyCode === 27) {
-				cancel();
+			  	cancel();
 			}
 		});
 		
 		document.getElementById("closeDialog").addEventListener("click", function(evt) {
+			console.log("Close clicked");
 			shutdown(true);
 		});
 		
@@ -76,7 +82,9 @@ function(mBootstrap, xhr, terminal) {
 		var wsUrl = document.URL.replace("http://", "ws://");
 		wsUrl = wsUrl.replace("https://", "wss://");
 		wsUrl = wsUrl.substring(0, wsUrl.indexOf("/godev")) + "/debug/socket?run="+resource.substring(5);
-		
+        if (isTest) {
+        	wsUrl = wsUrl + "&test=1";
+        }		
 		term.write("[Process Started - Press Ctrl-C to stop]\r\n");
 		
 		ws = new WebSocket(wsUrl);
