@@ -71,10 +71,10 @@ func init() {
 		}
 
 		if bundle_root_dir == "" {
-			_, err := os.Stat(srcDir + "/github.com/sirnewton01/godev/bundles")
+			_, err := os.Stat(srcDir + "/github.com/costinm/godev/bundles")
 
 			if err == nil {
-				bundle_root_dir = srcDir + "/github.com/sirnewton01/godev/bundles"
+				bundle_root_dir = srcDir + "/github.com/costinm/godev/bundles"
 				break
 			}
 		}
@@ -542,7 +542,7 @@ func main() {
 	//	http.HandleFunc("/gitapi/", wrapHandler(gitapiHandler))
 
 	if hostName == loopbackHost {
-		fmt.Printf("http://%v:%v\n", hostName, *port)
+		fmt.Printf("Local: http://%v:%v\n", hostName, *port)
 		err = http.ListenAndServe(hostName+":"+*port, nil)
 	} else {
 		fmt.Printf("https://%v:%v/login?MAGIC=%v\n", hostName, *port, magicKey)
