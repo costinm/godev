@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"code.google.com/p/go.net/websocket"
@@ -18,9 +19,14 @@ import (
 func debugSocket(ws *websocket.Conn) {
 	url := ws.Request().URL
 
+	if url.Query().Get("test") != "" {
+		goRun(ws, url.Query().Get("run"), "test")
+		return
+	}
+
 	// Short circuit for "go run" case
 	if url.Query().Get("run") != "" {
-		goRun(ws, url.Query().Get("run"))
+		goRun(ws, url.Query().Get("run"), "run")
 		return
 	}
 
@@ -135,25 +141,35 @@ func debugSocket(ws *websocket.Conn) {
 	c.Wait()
 }
 
-func goRun(ws *websocket.Conn, file string) {
+func goRun(ws *websocket.Conn, file string, cmd string) {
 	var ospath string
 	gopaths := filepath.SplitList(build.Default.GOPATH)
+	var c *exec.Cmd
 
-	for _, gopath := range gopaths {
-		p := filepath.Join(gopath, "src", file)
-		_, err := os.Stat(p)
-		if err == nil {
-			ospath = p
-			break
+	if cmd == "test" {
+		last := strings.LastIndex(file, "/")
+		println(ospath + " " + strconv.Itoa(last))
+		ospath = file[1:last]
+		println("go " + cmd + " " + ospath)
+		c = exec.Command("go", cmd, ospath, "-v")
+	} else {
+		for _, gopath := range gopaths {
+			p := filepath.Join(gopath, "src", file)
+			_, err := os.Stat(p)
+			if err == nil {
+				ospath = p
+				break
+			}
 		}
+
+		// File was not found
+		if ospath == "" {
+			return
+		}
+		println("go " + cmd + " " + ospath)
+		c = exec.Command("go", cmd, ospath)
 	}
 
-	// File was not found
-	if ospath == "" {
-		return
-	}
-
-	c := exec.Command("go", "run", ospath)
 	out, in, err := start(c)
 	if err != nil {
 		panic(err)

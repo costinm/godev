@@ -5,7 +5,6 @@
 package main
 
 import (
-	"code.google.com/p/go.net/websocket"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,25 +12,26 @@ import (
 	"go/build"
 	"io/ioutil"
 	"log"
-	"math/rand"
 	"net/http"
 	"net/http/cgi"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
-	"time"
+
+	"code.google.com/p/go.net/websocket"
 )
+
+import _ "net/http/pprof"
 
 const (
 	loopbackHost     = "127.0.0.1"
 	defaultPort      = "2022"
 	maxRatePerSecond = 1000
 )
-
 var (
 	goroot                       = ""
 	srcDirs                      = []string{}
@@ -48,6 +48,7 @@ var (
 	rateTracker                  = 0
 	rateTrackerMutex sync.Mutex
 	cfs              chainedFileSystem
+	bundlePath       = flag.String("bundlePath", "github.com/costinm/godev/bundles", "Relative path for the web content directories")
 )
 
 func init() {
@@ -65,16 +66,17 @@ func init() {
 
 	for i := len(dirs) - 1; i >= 0; i-- {
 		srcDir := dirs[i]
-
+		logger.Println("SRC DIR: " + srcDir)
 		if !strings.HasPrefix(srcDir, goroot) {
 			srcDirs = append(srcDirs, srcDir)
 		}
 
 		if bundle_root_dir == "" {
-			_, err := os.Stat(srcDir + "/github.com/costinm/godev/bundles")
+			_, err := os.Stat(srcDir + "/" + *bundlePath)
 
 			if err == nil {
-				bundle_root_dir = srcDir + "/github.com/costinm/godev/bundles"
+				bundle_root_dir = srcDir + "/" + *bundlePath
+				logger.Println("goroot: " + goroot + " bundle_root_dir " + srcDir)
 				break
 			}
 		}
@@ -93,34 +95,6 @@ func init() {
 		log.Fatal("GOPATH variable doesn't contain the godev source.\nEither add the location to the godev source to your GOPATH or set the srcdir flag to the location.")
 	}
 
-	if os.Getenv("GOHOST") != "" {
-		hostName = os.Getenv("GOHOST")
-
-		certFile = os.Getenv("GOCERTFILE")
-		keyFile = os.Getenv("GOKEYFILE")
-
-		// If the host name is not loopback then we must use a secure connection
-		//  with certificatns
-		if certFile == "" || keyFile == "" {
-			log.Fatal("When using a public port a certificate file (GOCERTFILE) and key file (GOKEYFILE) environment variables must be provided to secure the connection.")
-		}
-
-		// Initialize the random magic key for this session
-		rand.Seed(time.Now().UTC().UnixNano())
-		magicKey = strconv.FormatInt(rand.Int63(), 16)
-	}
-
-	// Clear out the rate tracker every second.
-	// The rate tracking helps to prevent anyone from
-	//   trying to brute force the magic key.
-	go func() {
-		for {
-			<-time.After(1 * time.Second)
-			rateTrackerMutex.Lock()
-			rateTracker = 0
-			rateTrackerMutex.Unlock()
-		}
-	}()
 }
 
 const (
@@ -256,7 +230,7 @@ func (cfs chainedFileSystem) checkNewPath(path string) {
 			pluginKey := subdirs[0] + "/bundle.html"
 			_, exists := data.Plugins[pluginKey]
 			if !exists {
-				logger.Printf("ADDED BUNDLE %v\n", pluginKey)
+				logger.Printf("ADDED BUNDLE %s %v\n", path, pluginKey)
 				data.Plugins[pluginKey] = true
 				data.pluginKeys = append(data.pluginKeys, pluginKey)
 				data.dirs = append(data.dirs, path)
@@ -309,36 +283,14 @@ type delegateFunc func(writer http.ResponseWriter, req *http.Request, path strin
 
 func wrapHandler(delegate delegateFunc) handlerFunc {
 	return func(writer http.ResponseWriter, req *http.Request) {
-		logger.Printf("HANDLER: %v %v\n", req.Method, req.URL.Path)
-
-		if hostName != loopbackHost {
-			// Monitor the rate of requests
-			rateTrackerMutex.Lock()
-			if rateTracker > maxRatePerSecond {
-				http.Error(writer, "Too many requests", 503)
-				rateTrackerMutex.Unlock()
-				return
-			}
-			rateTracker++
-			rateTrackerMutex.Unlock()
-
-			// Check the magic cookie
-			// Since redirection is not generally possible if the cookie is not
-			//  present then we deny the request.
-			cookie, err := req.Cookie("MAGIC" + *port)
-			if err != nil || (*cookie).Value != magicKey {
-				// Denied
-				http.Error(writer, "Permission Denied", 401)
-				return
-			}
-		}
+		//logger.Printf("HANDLER: %v %v\n", req.Method, req.URL.Path)
 
 		path := req.URL.Path
 		pathSegs := strings.Split(path, "/")[1:]
 		service := pathSegs[0]
 
-		logger.Printf("PATH SEGMENTS: %v\n", pathSegs)
-		logger.Printf("SERVICE: %v\n", service)
+		//logger.Printf("PATH SEGMENTS: %v\n", pathSegs)
+		logger.Printf("SERVICE: %v %v %v\n", service, req.Method, req.URL.Path)
 
 		handled := delegate(writer, req, path, pathSegs)
 
@@ -359,18 +311,6 @@ func wrapWebSocket(delegate http.Handler) handlerFunc {
 	return func(writer http.ResponseWriter, req *http.Request) {
 		logger.Printf("WEBSOCK HANDLER: %v %v\n", req.Method, req.URL.Path)
 
-		if hostName != loopbackHost {
-			// Check the magic cookie
-			// Since redirection is not generally possible if the cookie is not
-			//  present then we deny the request.
-			cookie, err := req.Cookie("MAGIC" + *port)
-			if err != nil || (*cookie).Value != magicKey {
-				// Denied
-				http.Error(writer, "Permission Denied", 401)
-				return
-			}
-		}
-
 		delegate.ServeHTTP(writer, req)
 	}
 }
@@ -389,7 +329,7 @@ func defaultsHandler(writer http.ResponseWriter, req *http.Request) {
 		ShowError(writer, 500, "Unable to marshal defaults", nil)
 		return
 	}
-
+	logger.Printf("Defaults: " + string(b) + " " + req.URL.Path)
 	writer.Write(b)
 }
 
@@ -439,8 +379,10 @@ func main() {
 	sort.Strings(bundleNames)
 
 	bundleFileSystems := make([]http.FileSystem, len(bundleNames), len(bundleNames))
+
 	bundleDirs := make([]string, len(bundleNames), len(bundleNames))
 	pluginKeys := make([]string, len(bundleNames), len(bundleNames))
+
 	for idx, bundleName := range bundleNames {
 		bundleDirs[idx] = filepath.Clean(bundle_root_dir + "/" + bundleName + "/web")
 		bundleFileSystems[idx] = http.Dir(bundleDirs[idx])
@@ -468,21 +410,30 @@ func main() {
 	}}}
 
 	// Poll the filesystem every so often to update the bundle caches
-	go func() {
-		for {
-			for _, srcDir := range srcDirs {
-				filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
-					cfs.cleanStalePaths()
-					if filepath.Base(path) == "godev-bundle" {
-						cfs.checkNewPath(path)
-					}
+	/*
+	     go func() {
 
-					return nil
-				})
-			}
-			<-time.After(5 * time.Second)
-		}
-	}()
+	   		for {
+	   			for _, srcDir := range srcDirs {
+	   				filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+	   					cfs.cleanStalePaths()
+	   					if filepath.Base(path) == "godev-bundle" {
+	   						cfs.checkNewPath(path)
+	   					}
+
+	   					return nil
+	   				})
+	   			}
+	   			<-time.After(5 * time.Second)
+	   		}
+	   	}()
+	*/
+	// Explicitly add the bundles.
+	// TODO: use flags instead (no need to scan the path every 5 min, more control)
+	cfs.checkNewPath(srcDirs[0] + "/github.com/sirnewton01/godev-oracle/godev-bundle")
+	for _, srcDir := range srcDirs {
+		logger.Println(srcDir)
+	}
 
 	http.HandleFunc("/defaults.pref", defaultsHandler)
 	http.HandleFunc("/", wrapFileServer(http.FileServer(cfs)))
@@ -541,15 +492,15 @@ func main() {
 	//	http.HandleFunc("/gitapi", wrapHandler(gitapiHandler))
 	//	http.HandleFunc("/gitapi/", wrapHandler(gitapiHandler))
 
-	if hostName == loopbackHost {
-		fmt.Printf("Local: http://%v:%v\n", hostName, *port)
-		err = http.ListenAndServe(hostName+":"+*port, nil)
-	} else {
-		fmt.Printf("https://%v:%v/login?MAGIC=%v\n", hostName, *port, magicKey)
-		err = http.ListenAndServeTLS(hostName+":"+*port, certFile, keyFile, nil)
-	}
+	// Run on localhost only - a separate proxy will handle TLS and other options
+	fmt.Printf("Running on %v\n", *port)
+	err = http.ListenAndServe("localhost"+":"+*port, nil)
 
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func LogCommand(cmd *exec.Cmd) {
+
 }
